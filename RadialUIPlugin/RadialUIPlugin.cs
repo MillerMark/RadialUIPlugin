@@ -4,6 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using LordAshes;
+using Newtonsoft.Json;
 using UnityEngine;
 using Object = System.Object;
 
@@ -15,7 +17,7 @@ namespace RadialUI
     {
         // constants
         public const string Guid = "org.hollofox.plugins.RadialUIPlugin";
-        private const string Version = "1.2.3.0";
+        private const string Version = "1.2.4.0";
 
         /// <summary>
         /// Awake plugin
@@ -25,6 +27,30 @@ namespace RadialUI
             Logger.LogInfo("In Awake for RadialUI");
 
             Debug.Log("RadialUI Plug-in loaded");
+
+            AddOnStatMenu(Guid+"1", new StatItemArgs
+            {
+                Callback = callback,
+                Color = Color.cyan,
+                Current = 5,
+                Max = 10,
+                Title = "New Cyan Stat"
+            });
+
+            AddOnStatMenu(Guid+"2", new StatItemArgs
+            {
+                Callback = callback,
+                Color = Color.magenta,
+                Current = 5,
+                Max = 10,
+                Title = "New Magenta Stat"
+            });
+        }
+
+        private void callback(MapMenuStatItem i, NGuid g)
+        {
+            Debug.Log(g);
+            Debug.Log(i);
         }
 
 
@@ -50,6 +76,7 @@ namespace RadialUI
         public static void AddOnSubmenuGm(string key, MapMenu.ItemArgs value, Func<NGuid, NGuid, bool> externalCheck = null) => _onSubmenuGm.Add(key,(value, externalCheck));
         public static void AddOnSubmenuAttacks(string key, MapMenu.ItemArgs value, Func<NGuid, NGuid, bool> externalCheck = null) => _onSubmenuAttacks.Add(key,(value, externalCheck));
         public static void AddOnSubmenuSize(string key, MapMenu.ItemArgs value, Func<NGuid, NGuid, bool> externalCheck = null) => _onSubmenuSize.Add(key,(value, externalCheck));
+        public static void AddOnStatMenu(string key, StatItemArgs value, Func<NGuid, bool>  externalCheck = null) => _onCharStatMenu.Add(key,(value, externalCheck));
 
         // Add On HideVolume
         public static void AddOnHideVolume(string key, MapMenu.ItemArgs value, Func<HideVolumeItem,bool> externalCheck = null) => _onHideVolumeCallback.Add(key, (value, externalCheck));
@@ -63,6 +90,7 @@ namespace RadialUI
         public static bool RemoveOnSubmenuGm(string key) => _onSubmenuGm.Remove(key);
         public static bool RemoveOnSubmenuAttacks(string key) => _onSubmenuAttacks.Remove(key);
         public static bool RemoveOnSubmenuSize(string key) => _onSubmenuSize.Remove(key);
+        public static bool RemoveOnCharStatMenu(string key) => _onCharStatMenu.Remove(key);
 
         // Remove On HideVolume
         public static bool RemoveOnHideVolume(string key) => _onHideVolumeCallback.Remove(key);
@@ -75,58 +103,71 @@ namespace RadialUI
 
         private (Action<MapMenuItem, Object>, MapMenuItem, Object) pending = (null,null,null);
 
+        private bool ready = true;
+
         /// <summary>
         /// Looping method run by plugin
         /// </summary>
         void Update()
         {
-            if (MapMenuManager.HasInstance && MapMenuManager.IsOpen)
+            if (ready)
             {
-
-                var instance = MapMenuManager.Instance;
-                var type = instance.GetType();
-
-                var field = type.GetField("_allOpenMenus", bindFlags);
-                var menus = (List<MapMenu>)field.GetValue(instance);
-
-                if (menus.Count >= 1 && menus.Count >= last)
+                ready = false;
+                if (MapMenuManager.HasInstance && MapMenuManager.IsOpen)
                 {
-                    try
+
+                    var instance = MapMenuManager.Instance;
+                    var type = instance.GetType();
+
+                    var field = type.GetField("_allOpenMenus", bindFlags);
+                    var menus = (List<MapMenu>) field.GetValue(instance);
+
+                    var title = "";
+                    if (menus.Count >= 1 && menus.Count >= last)
                     {
                         var map = menus[menus.Count - 1];
                         var Map = map.transform.GetChild(0).GetChild(0);
-                        var mapComponent = Map.GetComponent<MapMenuItem>();
-                        var mapField = mapComponent.GetType().GetField("_title", bindFlags);
-                        var title = (string) mapField.GetValue(mapComponent);
+
+                        var foundComp = Map.TryGetComponent(out MapMenuItem mapComponents);
+                        var foundStat = Map.TryGetComponent(out MapMenuStatItem mapStatComponents);
+
+                        if (foundComp && !foundStat)
+                        {
+                            var mapComponent = mapComponents;
+                            var mapField = mapComponent.GetType().GetField("_title", bindFlags);
+                            title = (string) mapField.GetValue(mapComponent);
+                        }
+
+                        if (foundStat)
+                        {
+                            title = "Creature Stat";
+                        }
+
                         if (menus.Count == last && lastTitle != title) last -= 1;
-                        Probe();
+                        if (foundComp || foundStat) Probe();
                         lastTitle = title;
                         lastSuccess = true;
                     }
-                    catch (Exception e)
-                    {
-                        // Probably Stat open
-                        if (lastSuccess == true)
-                        {
-                            Debug.Log($"Error: {e}, most likely stat submenu being opened");
-                            lastSuccess = false;
-                        }
-                    }
-                }
-                last = menus.Count;
-            }
-            else
-            {
-                last = 0;
-                lastTitle = "";
-                lastSuccess = true;
-            }
 
-            if (pending.Item1 != null && Execute != DateTime.MinValue && DateTime.Now > Execute)
-            {
-                pending.Item1(pending.Item2, pending.Item3);
-                pending = (null, null, null);
-                Execute = DateTime.MinValue;
+                    last = menus.Count;
+
+                    OnStatChange(title);
+                }
+                else
+                {
+                    last = 0;
+                    lastTitle = "";
+                    lastSuccess = true;
+                    ClearStatMenus();
+                }
+
+                if (pending.Item1 != null && Execute != DateTime.MinValue && DateTime.Now > Execute)
+                {
+                    pending.Item1(pending.Item2, pending.Item3);
+                    pending = (null, null, null);
+                    Execute = DateTime.MinValue;
+                }
+                ready = true;
             }
         }
 
@@ -144,29 +185,41 @@ namespace RadialUI
             {
                 var map = menus[i];
                 var Map = map.transform.GetChild(0).GetChild(0);
-                var mapComponent = Map.GetComponent<MapMenuItem>();
+                // Debug.Log("Found Map");
 
-                var mapField = mapComponent.GetType().GetField("_title", bindFlags);
-                var title = (string)mapField.GetValue(mapComponent);
+                var foundComp = Map.TryGetComponent(out MapMenuItem mapComponents);
+                var foundStat = Map.TryGetComponent(out MapMenuStatItem mapStatComponents);
+                // Debug.Log("Fetch Components");
 
-                var id = LocalClient.SelectedCreatureId.Value;
+                if (foundComp && !foundStat)
+                {
+                    var mapComponent = mapComponents;
+                    var mapField = mapComponent.GetType().GetField("_title", bindFlags);
+                    var title = (string) mapField.GetValue(mapComponent);
 
-                Debug.Log(title);
+                    var id = LocalClient.SelectedCreatureId.Value;
 
-                // Minis Related
-                if (IsMini(title)) AddCreatureEvent(_onCharacterCallback,id,map);
-                if (CanAttack(title)) AddCreatureEvent(_onCanAttack, id, map);
-                if (CanNotAttack(title)) AddCreatureEvent(_onCantAttack, id, map);
-                
-                // Minis Submenu
-                if (IsEmotes(title)) AddCreatureEvent(_onSubmenuEmotes, id, map);
-                if (IsKill(title)) AddCreatureEvent(_onSubmenuKill, id, map);
-                if (IsGmMenu(title)) AddCreatureEvent(_onSubmenuGm, id, map);
-                if (IsAttacksMenu(title)) AddCreatureEvent(_onSubmenuAttacks, id, map);
-                if (IsSizeMenu(title)) AddCreatureEvent(_onSubmenuSize, id, map);
+                    Debug.Log(title);
 
-                // Hide Volumes
-                if (IsHideVolume(title)) AddHideVolumeEvent(_onHideVolumeCallback, map);
+                    // Minis Related
+                    if (IsMini(title)) AddCreatureEvent(_onCharacterCallback, id, map);
+                    if (CanAttack(title)) AddCreatureEvent(_onCanAttack, id, map);
+                    if (CanNotAttack(title)) AddCreatureEvent(_onCantAttack, id, map);
+
+                    // Minis Submenu
+                    if (IsEmotes(title)) AddCreatureEvent(_onSubmenuEmotes, id, map);
+                    if (IsKill(title)) AddCreatureEvent(_onSubmenuKill, id, map);
+                    if (IsGmMenu(title)) AddCreatureEvent(_onSubmenuGm, id, map);
+                    if (IsAttacksMenu(title)) AddCreatureEvent(_onSubmenuAttacks, id, map);
+                    if (IsSizeMenu(title)) AddCreatureEvent(_onSubmenuSize, id, map);
+
+                    // Hide Volumes
+                    if (IsHideVolume(title)) AddHideVolumeEvent(_onHideVolumeCallback, map);
+                } else if (foundStat)
+                {
+                    // Debug.Log("Found Stat instead");
+                    AddStatCreatureEvent(map);
+                }
             }
         }
 
@@ -192,9 +245,91 @@ namespace RadialUI
                     FadeName = handlers.Item1.FadeName,
                     Obj = handlers.Item1.Obj,
                 }
-                
-                );
+            );
         }
+
+        // Registered Value
+        private static readonly Dictionary<string, (StatItemArgs, Func<NGuid, bool> check)> _onCharStatMenu = new Dictionary<string, (StatItemArgs, Func<NGuid, bool> check)>();
+        
+        // store current value
+        private Dictionary<(NGuid,string), (StatItemArgs args, MapMenuStatItem item)> statItems = new Dictionary<(NGuid, string), (StatItemArgs args, MapMenuStatItem item)>();
+
+        private void ClearStatMenus()
+        {
+            var keys = statItems.Keys.ToArray();
+            foreach (var k in keys)
+            {
+                statItems[k] = (statItems[k].args,null);
+            }
+        }
+
+        private void AddStatCreatureEvent(MapMenu map)
+        {
+            var target = GetRadialTargetCreature();
+            var index = 4;
+            
+            foreach (var key in _onCharStatMenu.Keys)
+            {
+                var result = StatMessaging.ReadInfo(new CreatureGuid(target), key);
+                
+                if (result != "")
+                {
+                    StatMessaging.Subscribe(key,null);
+                }
+                else
+                {
+
+                }
+
+                Debug.Log(key);
+                if (_onCharStatMenu[key].check == null || _onCharStatMenu[key].check(target))
+                {
+                    var args = _onCharStatMenu[key].Item1;
+                    if (!statItems.ContainsKey((target, key)))
+                    {
+                        statItems.Add((target, key), (args,null));
+                    }
+
+                    args = statItems[(target, key)].args;
+                    Debug.Log(target);
+                    
+                    var item = map.AddStatItem(args, target, index);
+                    statItems[(target, key)] = (args, item);
+                    index++;
+                }
+            }
+        }
+
+        private void OnStatChange(string title)
+        {
+            if (!IsMini(title))
+            {
+                var keys = _onCharStatMenu.Keys.ToArray();
+
+                foreach (var key in keys)
+                {
+                    Debug.Log(key);
+                    var info = StatMessaging.ReadInfo(new CreatureGuid(GetRadialTargetCreature()), key);
+                    
+                    StatMessaging.SetInfo(new CreatureGuid(GetRadialTargetCreature()), key,);
+
+
+
+                    if (statItems[key].item != null &&
+                        statItems[key].args.Current != statItems[key].item.GetStatItem().Current)
+                    {
+                        var i = statItems[key].args;
+                        Debug.Log(i.Current);
+                        i.Current = statItems[key].item.GetStatItem().Current;
+                        Debug.Log(i.Current);
+                        statItems[key] = (i, statItems[key].item);
+                        Debug.Log("On State Change");
+                        _onCharStatMenu[key.Item2].Item1.Callback(statItems[key].item, key.Item1);
+                    }
+                }
+            }
+        }
+        
 
         public static NGuid GetRadialTargetCreature()
         {
