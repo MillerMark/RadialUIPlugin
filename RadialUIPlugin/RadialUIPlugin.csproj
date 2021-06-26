@@ -392,6 +392,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="MapMenuExt.cs" />
+    <Compile Include="ExtraStatsPlugin.cs" />
     <Compile Include="StatItemArgs.cs" />
     <Compile Include="RadialUIPlugin.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

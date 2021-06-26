@@ -27,30 +27,6 @@ namespace RadialUI
             Logger.LogInfo("In Awake for RadialUI");
 
             Debug.Log("RadialUI Plug-in loaded");
-
-            AddOnStatMenu(Guid+"1", new StatItemArgs
-            {
-                Callback = callback,
-                Color = Color.cyan,
-                Current = 5,
-                Max = 10,
-                Title = "New Cyan Stat"
-            });
-
-            AddOnStatMenu(Guid+"2", new StatItemArgs
-            {
-                Callback = callback,
-                Color = Color.magenta,
-                Current = 5,
-                Max = 10,
-                Title = "New Magenta Stat"
-            });
-        }
-
-        private void callback(MapMenuStatItem i, NGuid g)
-        {
-            Debug.Log(g);
-            Debug.Log(i);
         }
 
 
